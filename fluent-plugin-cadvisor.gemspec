@@ -1,16 +1,14 @@
 # coding: utf-8
 lib = File.expand_path('../lib', __FILE__)
 $LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
-require 'fluent/plugin/cadvisor/version'
 
 Gem::Specification.new do |spec|
   spec.name          = "fluent-plugin-cadvisor"
-  spec.version       = Fluent::Plugin::Cadvisor::VERSION
-  spec.authors       = ["Alex"]
-  spec.email         = ["al.gaspar@gmail.com"]
-  spec.summary       = %q{TODO: Write a short summary. Required.}
-  spec.description   = %q{TODO: Write a longer description. Optional.}
-  spec.homepage      = ""
+  spec.version       = 0.0.1
+  spec.authors       = ["Woorank"]
+  spec.email         = ["dev@woorank.com"]
+  spec.summary       = "cadvisor input plugin for Fluent event collector"
+  spec.homepage      = "https://github.com/Woorank/fluent-plugin-cadvisor"
   spec.license       = "MIT"
 
   spec.files         = `git ls-files -z`.split("\x0")
