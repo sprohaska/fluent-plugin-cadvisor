@@ -82,8 +82,17 @@ class CadvisorInput < Fluent::Input
       res = socket.readlines
       socket.close
 
+      # Find body position
+      idx = -1
+      res.to_a.each_with_index do | stats, index |
+        if stats[0] == '['
+          idx = index
+          break;
+        end
+      end
+
       #Remove HTTP Headers and parse the body
-      jsn = JSON.parse(res.to_a[5..-1].join)
+      jsn = JSON.parse(res.to_a[idx..-1].join)
       jsn.collect { |obj| {:id => obj['Id'], :name => obj['Image']} }
     else
       []
