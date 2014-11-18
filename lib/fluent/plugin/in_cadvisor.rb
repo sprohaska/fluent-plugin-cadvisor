@@ -22,7 +22,7 @@ class CadvisorInput < Fluent::Input
   config_param :host, :string, :default => 'localhost'
   config_param :port, :string, :default => 8080
   config_param :api_version, :string, :default => '1.1'
-  config_param :stats_interval, :time, :default => 10 # every minute
+  config_param :stats_interval, :time, :default => 60 # every minute
   config_param :tag_prefix, :string, :default => "metric"
 
   def initialize
@@ -51,6 +51,14 @@ class CadvisorInput < Fluent::Input
   rescue
     log.error "unexpected error", :error=>$!.to_s
     log.error_backtrace
+  end
+
+  def get_interval (current, previous)
+    cur  = Time.parse(current).to_f
+    prev = Time.parse(previous).to_f
+
+    # to nano seconds
+    (cur - prev) * 1000000000
   end
 
   def get_spec
@@ -90,20 +98,38 @@ class CadvisorInput < Fluent::Input
     # Set max memory
     memory_limit = @machine['memory_capacity'] < res['spec']['memory']['limit'] ? @machine['memory_capacity'] : res['spec']['memory']['limit']
 
-    prev = @dict[id] ||= 0
-    res['stats'].each do | stats |
+    latest_timestamp = @dict[id] ||= 0
+
+    # Order from
+    rev_stats = res['stats'].reverse
+
+    rev_stats.each_with_index do | stats, index |
+      # Break if it's the last item
+      # We need 2 items to create the percentage, in this case the prev will be
+      # out of the array
+      break if index == (rev_stats.count - 1)
+
       timestamp = Time.parse(stats['timestamp']).to_i
-      break if timestamp < prev
+      # We already have stored these items
+      break if timestamp < latest_timestamp
 
       @dict[id] = timestamp
+
+      num_cores = stats['cpu']['usage']['per_cpu_usage'].count
+
+      # CPU percentage variables
+      prev           = rev_stats[index + 1];
+      raw_usage      = stats['cpu']['usage']['total'] - prev['cpu']['usage']['total']
+      interval_in_ns = get_interval(stats['timestamp'], prev['timestamp'])
 
       record = {
         'container_id'       => id,
         'image'              => obj[:name],
         'memory_current'     => stats['memory']['usage'],
         'memory_limit'       => memory_limit,
-        'cpu_usage'          => stats['cpu']['usage']['total'],
-        'cpu_num_cores'      => stats['cpu']['usage']['per_cpu_usage'].count,
+        'cpu_usage'          => raw_usage,
+        'cpu_usage_pct'      => (((raw_usage / interval_in_ns ) / num_cores ) * 100).round(2),
+        'cpu_num_cores'      => num_cores,
         'network_rx_bytes'   => stats['network']['rx_bytes'],
         'network_rx_packets' => stats['network']['rx_packets'],
         'network_rx_errors'  => stats['network']['rx_errors'],
