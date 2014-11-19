@@ -109,25 +109,25 @@ class CadvisorInput < Fluent::Input
 
     latest_timestamp = @dict[id] ||= 0
 
-    # Order from
-    rev_stats = res['stats'].reverse
+    # Remove already sent elements
+    res['stats'].reject! do | stats |
+      Time.parse(stats['timestamp']).to_i <= latest_timestamp
+    end
 
-    rev_stats.each_with_index do | stats, index |
-      # Break if it's the last item
-      # We need 2 items to create the percentage, in this case the prev will be
-      # out of the array
-      break if index == (rev_stats.count - 1)
-
+    res['stats'].each_with_index do | stats, index |
       timestamp = Time.parse(stats['timestamp']).to_i
-      # We already have stored these items
-      break if timestamp < latest_timestamp
-
-      @dict[id] = timestamp
+      # Break on last element
+      # We need 2 elements to create the percentage, in this case the prev will be
+      # out of the array
+      if index == (res['stats'].count - 1)
+        @dict[id] = timestamp
+        break
+      end
 
       num_cores = stats['cpu']['usage']['per_cpu_usage'].count
 
       # CPU percentage variables
-      prev           = rev_stats[index + 1];
+      prev           = res['stats'][index + 1];
       raw_usage      = stats['cpu']['usage']['total'] - prev['cpu']['usage']['total']
       interval_in_ns = get_interval(stats['timestamp'], prev['timestamp'])
 
