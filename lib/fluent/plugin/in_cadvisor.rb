@@ -1,4 +1,5 @@
 require 'rest_client'
+require 'digest/sha1'
 require 'time'
 
 class CadvisorInput < Fluent::Input
@@ -132,6 +133,7 @@ class CadvisorInput < Fluent::Input
       interval_in_ns = get_interval(stats['timestamp'], prev['timestamp'])
 
       record = {
+        'id'                 => Digest::SHA1.hexdigest("#{obj[:name]}#{id}#{timestamp.to_s}"),
         'container_id'       => id,
         'image'              => obj[:name],
         'memory_current'     => stats['memory']['usage'],
