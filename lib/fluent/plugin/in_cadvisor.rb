@@ -151,7 +151,7 @@ class CadvisorInput < Fluent::Input
         'network_tx_dropped' => stats['network']['tx_dropped'],
       }
 
-      Fluent::Engine.emit("stats", timestamp, record)
+      Fluent::Engine.emit("#{tag_prefix}stats", timestamp, record)
     end
   end
 
