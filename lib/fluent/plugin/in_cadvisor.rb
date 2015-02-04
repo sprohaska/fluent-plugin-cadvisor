@@ -1,4 +1,4 @@
-require 'rest_client'
+require 'rest-client'
 require 'digest/sha1'
 require 'time'
 
