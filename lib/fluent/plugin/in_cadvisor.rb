@@ -83,7 +83,7 @@ class CadvisorInput < Fluent::Input
     config = container_json['Config']
 
     id   = container_json['Id']
-    name = container_json['Image']
+    name = config['Image']
     env  = config['Hostname'].split('--')[2] || '' # app--version--env
 
     response = RestClient.get(@cadvisorEP + "/containers/docker/" + id)
