@@ -1,6 +1,7 @@
 require 'rest-client'
 require 'digest/sha1'
 require 'time'
+require 'docker'
 
 class CadvisorInput < Fluent::Input
   class TimerWatcher < Coolio::TimerWatcher
@@ -25,10 +26,13 @@ class CadvisorInput < Fluent::Input
   config_param :api_version, :string, :default => '1.1'
   config_param :stats_interval, :time, :default => 60 # every minute
   config_param :tag_prefix, :string, :default => "metric"
+  config_param :docker_url, :string,  :default => 'unix:///var/run/docker.sock'
 
   def initialize
     super
     require 'socket'
+
+    Docker.url = @docker_url
     @hostname = Socket.gethostname
     @dict     = {}
   end
@@ -69,39 +73,19 @@ class CadvisorInput < Fluent::Input
 
   # Metrics collection methods
   def get_metrics
-    list_container_ids.each do |obj|
+    Docker::Container.all.each do |obj|
       emit_container_info(obj)
     end
   end
 
-  def list_container_ids
-    socket_path = "/var/run/docker.sock"
-    if File.exists?(socket_path)
-      socket = Socket.unix(socket_path)
-      socket.puts("GET /containers/json HTTP/1.0\n\r")
-
-      res = socket.readlines
-      socket.close
-
-      # Find body position
-      idx = -1
-      res.to_a.each_with_index do | stats, index |
-        if stats[0] == '['
-          idx = index
-          break;
-        end
-      end
-
-      #Remove HTTP Headers and parse the body
-      jsn = JSON.parse(res.to_a[idx..-1].join)
-      jsn.collect { |obj| {:id => obj['Id'], :name => obj['Image']} }
-    else
-      []
-    end
-  end
-
   def emit_container_info(obj)
-    id = obj[:id]
+    container_json = obj.json
+    config = container_json['Config']
+
+    id   = container_json['Id']
+    name = container_json['Image']
+    env  = config['Hostname'].split('--')[2] || '' # app--version--env
+
     response = RestClient.get(@cadvisorEP + "/containers/docker/" + id)
     res = JSON.parse(response.body)
 
@@ -133,9 +117,10 @@ class CadvisorInput < Fluent::Input
       interval_in_ns = get_interval(stats['timestamp'], prev['timestamp'])
 
       record = {
-        'id'                 => Digest::SHA1.hexdigest("#{obj[:name]}#{id}#{timestamp.to_s}"),
+        'id'                 => Digest::SHA1.hexdigest("#{name}#{id}#{timestamp.to_s}"),
         'container_id'       => id,
-        'image'              => obj[:name],
+        'image'              => name,
+        'environment'        => env,
         'memory_current'     => stats['memory']['usage'],
         'memory_limit'       => memory_limit,
         'cpu_usage'          => raw_usage,
