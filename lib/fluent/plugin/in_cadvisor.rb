@@ -21,11 +21,11 @@ class CadvisorInput < Fluent::Input
 
   Fluent::Plugin.register_input('cadvisor', self)
 
+  config_param :tag, :string
   config_param :host, :string, :default => 'localhost'
   config_param :port, :string, :default => 8080
-  config_param :api_version, :string, :default => '1.1'
+  config_param :api_version, :string, :default => '1.2'
   config_param :stats_interval, :time, :default => 60 # every minute
-  config_param :tag_prefix, :string, :default => "metric"
   config_param :docker_url, :string,  :default => 'unix:///var/run/docker.sock'
 
   def initialize
@@ -83,60 +83,96 @@ class CadvisorInput < Fluent::Input
     config = container_json['Config']
 
     id   = container_json['Id']
-    name = config['Image']
-    env  = config['Hostname'].split('--')[2] || '' # app--version--env
+    name = container_json['Name']
+    name.sub! /^[\/]/, ''  # Remove leading '/'
+    image = config['Image']
 
-    response = RestClient.get(@cadvisorEP + "/containers/docker/" + id)
+    response = RestClient.get(@cadvisorEP + "/docker/" + id)
     res = JSON.parse(response.body)
+    res = res.values[0]
 
     # Set max memory
     memory_limit = @machine['memory_capacity'] < res['spec']['memory']['limit'] ? @machine['memory_capacity'] : res['spec']['memory']['limit']
 
     latest_timestamp = @dict[id] ||= 0
 
-    # Remove already sent elements
+    # Remove previously sent stats, keeping the latest as a base for the rate
+    # computations.
     res['stats'].reject! do | stats |
-      Time.parse(stats['timestamp']).to_i <= latest_timestamp
+      Time.parse(stats['timestamp']).to_i < latest_timestamp
     end
 
     res['stats'].each_with_index do | stats, index |
+      next if index == 0
+
       timestamp = Time.parse(stats['timestamp']).to_i
-      # Break on last element
-      # We need 2 elements to create the percentage, in this case the prev will be
-      # out of the array
-      if index == (res['stats'].count - 1)
-        @dict[id] = timestamp
-        break
-      end
+      @dict[id] = timestamp
 
       num_cores = stats['cpu']['usage']['per_cpu_usage'].count
 
       # CPU percentage variables
-      prev           = res['stats'][index + 1];
+      prev           = res['stats'][index - 1];
       raw_usage      = stats['cpu']['usage']['total'] - prev['cpu']['usage']['total']
       interval_in_ns = get_interval(stats['timestamp'], prev['timestamp'])
 
+      to_MBps = 1e9 / interval_in_ns / 1e6
+      to_persec = 1e9 / interval_in_ns
+      net = stats['network']
+      prevnet = prev['network']
+
       record = {
-        'id'                 => Digest::SHA1.hexdigest("#{name}#{id}#{timestamp.to_s}"),
-        'container_id'       => id,
-        'image'              => name,
-        'environment'        => env,
-        'memory_current'     => stats['memory']['usage'],
-        'memory_limit'       => memory_limit,
-        'cpu_usage'          => raw_usage,
-        'cpu_usage_pct'      => (((raw_usage / interval_in_ns ) / num_cores ) * 100).round(2),
-        'cpu_num_cores'      => num_cores,
-        'network_rx_bytes'   => stats['network']['rx_bytes'],
-        'network_rx_packets' => stats['network']['rx_packets'],
-        'network_rx_errors'  => stats['network']['rx_errors'],
-        'network_rx_dropped' => stats['network']['rx_dropped'],
-        'network_tx_bytes'   => stats['network']['tx_bytes'],
-        'network_tx_packets' => stats['network']['tx_packets'],
-        'network_tx_errors'  => stats['network']['tx_errors'],
-        'network_tx_dropped' => stats['network']['tx_dropped'],
+        'id' => Digest::SHA1.hexdigest("#{name}#{id}#{timestamp.to_s}"),
+
+        'container_id_full' => id,
+        'container_name' => name,
+        'image' => image,
+        'memory_limit' => memory_limit,
+        'cpu_num_cores' => num_cores,
+
+        'memory_usage' => stats['memory']['usage'],
+
+        'cpu_usage_total' => stats['cpu']['usage']['total'],
+        'cpu_usage_total_rate' => (raw_usage / interval_in_ns).round(3),
+        'cpu_usage_total_pct' => (
+          (((raw_usage / interval_in_ns ) / num_cores ) * 100).round(2)
+        ),
+
+        'network_rx_bytes' => net['rx_bytes'],
+        'network_rx_MBps' => (
+          (net['rx_bytes'] - prevnet['rx_bytes']) * to_MBps
+        ).round(3),
+        'network_rx_packets' => net['rx_packets'],
+        'network_rx_packets_persec' => (
+          (net['rx_packets'] - prevnet['rx_packets']) * to_persec
+        ).round(3),
+        'network_rx_errors' => net['rx_errors'],
+        'network_rx_errors_persec' => (
+          (net['rx_errors'] - prevnet['rx_errors']) * to_persec
+        ).round(3),
+        'network_rx_dropped' => net['rx_dropped'],
+        'network_rx_dropped_persec' => (
+          (net['rx_dropped'] - prevnet['rx_dropped']) * to_persec
+        ).round(3),
+
+        'network_tx_bytes' => net['tx_bytes'],
+        'network_tx_MBps' => (
+          (net['tx_bytes'] - prevnet['tx_bytes']) * to_MBps
+        ).round(3),
+        'network_tx_packets' => net['tx_packets'],
+        'network_tx_packets_persec' => (
+          (net['tx_packets'] - prevnet['tx_packets']) * to_persec
+        ).round(3),
+        'network_tx_errors' => net['tx_errors'],
+        'network_tx_errors_persec' => (
+          (net['tx_errors'] - prevnet['tx_errors']) * to_persec
+        ).round(3),
+        'network_tx_dropped' => net['tx_dropped'],
+        'network_tx_dropped_persec' => (
+          (net['tx_dropped'] - prevnet['tx_dropped']) * to_persec
+        ).round(3),
       }
 
-      Fluent::Engine.emit("#{tag_prefix}stats", timestamp, record)
+      Fluent::Engine.emit(@tag, timestamp, record)
     end
   end
 
