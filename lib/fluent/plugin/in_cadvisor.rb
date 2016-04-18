@@ -25,6 +25,7 @@ class CadvisorInput < Fluent::Input
   config_param :host, :string, :default => 'localhost'
   config_param :port, :string, :default => 8080
   config_param :api_version, :string, :default => '1.2'
+  config_param :api_variant, :string, :default => 'container'
   config_param :stats_interval, :time, :default => 60 # every minute
   config_param :docker_url, :string,  :default => 'unix:///var/run/docker.sock'
 
@@ -87,9 +88,16 @@ class CadvisorInput < Fluent::Input
     name.sub! /^[\/]/, ''  # Remove leading '/'
     image = config['Image']
 
-    response = RestClient.get(@cadvisorEP + "/docker/" + id)
-    res = JSON.parse(response.body)
-    res = res.values[0]
+    if @api_variant == 'container'
+      # This works with Docker >= 1.10.x
+      response = RestClient.get(@cadvisorEP + "/containers/docker/" + id)
+      res = JSON.parse(response.body)
+    else
+      # This works with Docker <= 1.9.x
+      response = RestClient.get(@cadvisorEP + "/docker/" + id)
+      res = JSON.parse(response.body)
+      res = res.values[0]
+    end
 
     # Set max memory
     memory_limit = @machine['memory_capacity'] < res['spec']['memory']['limit'] ? @machine['memory_capacity'] : res['spec']['memory']['limit']
